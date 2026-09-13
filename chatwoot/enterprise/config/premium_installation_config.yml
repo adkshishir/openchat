@@ -1,0 +1,22 @@
+# ------- Branding Related Config ------- #
+- name: INSTALLATION_NAME
+  value: 'OpenChat'
+- name: LOGO_THUMBNAIL
+  value: '/brand-assets/logo_thumbnail.svg'
+- name: LOGO
+  value: '/brand-assets/logo.svg'
+- name: LOGO_DARK
+  value: '/brand-assets/logo_dark.svg'
+- name: BRAND_URL
+  value: '/'
+- name: WIDGET_BRAND_URL
+  value: '/'
+- name: BRAND_NAME
+  value: 'OpenChat'
+- name: TERMS_URL
+  value: '/'
+- name: PRIVACY_URL
+  value: '/'
+- name: DISPLAY_MANIFEST
+  value: true
+# ------- End of Branding Related Config ------- #

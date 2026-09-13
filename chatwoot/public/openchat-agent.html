@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenClaw Agent — OpenChat</title>
+    <meta http-equiv="refresh" content="0;url=/app/accounts/1/settings/openclaw" />
+  </head>
+  <body>
+    <p>Redirecting to OpenClaw Agent… <a href="/app/accounts/1/settings/openclaw">Open page</a></p>
+    <script>
+      (function () {
+        var match = document.cookie.match(/(?:^|; )cw_d_session_info=([^;]*)/);
+        var accountId = 1;
+        try {
+          // Prefer last account from path referrer if present
+          var ref = document.referrer || '';
+          var m = ref.match(/\/accounts\/(\d+)\//);
+          if (m) accountId = m[1];
+        } catch (e) {}
+        window.location.replace('/app/accounts/' + accountId + '/settings/openclaw');
+      })();
+    </script>
+  </body>
+</html>

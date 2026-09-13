@@ -1,0 +1,24 @@
+services:
+  postgres:
+    ports: !override
+      - "5435:5432"
+    environment:
+      POSTGRES_PASSWORD: postgres
+  redis:
+    ports: !override
+      - "6381:6379"
+  rails:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports: !override
+      - "3000:3000"
+    environment:
+      # WhatsApp QR start/wait can exceed the gem default of 15s.
+      RACK_TIMEOUT_SERVICE_TIMEOUT: "60"
+      # Allow webhooks to host.docker.internal (OpenChat bridge on host).
+      SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
+  sidekiq:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      SAFE_FETCH_ALLOW_PRIVATE_NETWORK: "true"
