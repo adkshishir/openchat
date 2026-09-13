@@ -1,0 +1,89 @@
+# Dev-mode compose for openchat-bridge — live-reload source edits, no rebuild.
+#
+# WHY THIS EXISTS
+#   The production Dockerfile does `COPY src ./src` at *build* time, so
+#   editing a file under src/ on the host has zero effect on a container
+#   started from that image until you rebuild it. This file fixes that for
+#   local dev: it bind-mounts ./src into the container and runs the same
+#   thing `npm run dev` runs (see package.json's "dev" script) — Node's
+#   built-in --watch, which restarts the process automatically on every
+#   save, with no separate TS build step since Node 22 runs .ts directly
+#   via --experimental-strip-types. The command below spells this out
+#   explicitly with one addition, --watch-path=/app/src — see the comment
+#   above `command:` for why plain `npm run dev` isn't reliable here.
+#
+# HOW THIS DIFFERS FROM PRODUCTION
+#   - deploy/docker-compose.saas.yml + Dockerfile: bakes src/ into the
+#     image, runs `node src/index.ts` directly (no --watch), NODE_ENV=production.
+#     That's the real deploy path — untouched by this file.
+#   - This file: reuses the already-built `openchat-bridge:latest` image
+#     (no rebuild required to start dev mode), overrides the command to
+#     run with --watch, and bind-mounts ./src read-write over the image's
+#     baked-in copy plus a container-specific env file (.env.container —
+#     see the comment in that file for why it's not just ./.env).
+#   - This is opt-in and separate from the production path; it does not
+#     replace the Dockerfile or deploy/docker-compose.saas.yml.
+#
+# WHAT THIS DOES NOT MANAGE
+#   openchat-bridge-postgres keeps running exactly as it is today (a plain
+#   `docker run` container publishing Postgres on host port 5434). This
+#   compose file only replaces how the bridge *app* container runs, via
+#   network_mode: host + DATABASE_URL=...@localhost:5434/... (same as prod
+#   today), so it talks to that same already-running Postgres container
+#   without this file needing to touch it at all.
+#
+# USAGE
+#   # one-time (only if the image doesn't exist yet / after a dependency change):
+#   docker build -t openchat-bridge:latest .
+#
+#   # stop the non-dev container first (same container name is reused):
+#   docker stop openchat-bridge && docker rm openchat-bridge
+#
+#   # start dev mode:
+#   docker compose -f docker-compose.dev.yml up -d
+#
+#   # watch it live-reload on save:
+#   docker logs -f openchat-bridge
+#
+#   # stop dev mode:
+#   docker compose -f docker-compose.dev.yml down
+#
+#   # to go back to the production container instead:
+#   docker run -d --name openchat-bridge --network host --restart no \
+#     -v /home/shishir/.openclaw:/openclaw-state \
+#     -v /home/shishir/.npm-global/lib/node_modules/openclaw:/opt/openclaw:ro \
+#     --env-file .env.container \
+#     openchat-bridge:latest
+
+services:
+  openchat-bridge:
+    image: openchat-bridge:latest
+    container_name: openchat-bridge
+    network_mode: host
+    restart: "no"
+    env_file:
+      - .env.container
+    volumes:
+      # Live source mount — this is the whole point of dev mode.
+      - ./src:/app/src
+      # Same env file the container's `npm run dev` (--env-file=.env) reads;
+      # mounted so the literal `npm run dev` script works unmodified.
+      - ./.env.container:/app/.env:ro
+      # Same OpenClaw state + package mounts as the production container
+      # (from `docker inspect openchat-bridge`) — required for WhatsApp QR
+      # (operator.admin) and the login-qr module. Do not delete/modify
+      # anything under the host side of these paths.
+      - /home/shishir/.openclaw:/openclaw-state
+      - /home/shishir/.npm-global/lib/node_modules/openclaw:/opt/openclaw:ro
+    # Equivalent to `npm run dev` (see package.json), but with an explicit
+    # --watch-path=/app/src. This was verified empirically: plain `--watch`
+    # (default dependency-graph watching) only reliably restarted on the
+    # *first* edit under this bind mount — a second/third edit to the same
+    # file was silently ignored (confirmed with `docker logs`: only one
+    # "Restarting" line ever appeared no matter how many edits followed).
+    # `fs.watch` itself does see every change (verified directly), so the
+    # bind mount and inotify are fine; it's specifically node's default
+    # --watch dependency-graph mode that stops re-registering watches after
+    # a restart here. Explicit --watch-path=/app/src watches the directory
+    # itself instead and was confirmed reliable across repeated edits.
+    command: ["node", "--watch", "--watch-path=/app/src", "--env-file=.env", "--experimental-strip-types", "src/index.ts"]

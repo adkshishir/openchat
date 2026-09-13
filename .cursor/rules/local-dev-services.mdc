@@ -1,0 +1,26 @@
+---
+description: Local OpenChat/Chatwoot/OpenClaw service map and how each process runs
+alwaysApply: true
+---
+
+# Local dev services
+
+Do not invent alternate ports or assume everything is Docker or everything is native.
+
+| Service | Bind / port | How it runs |
+|---------|-------------|-------------|
+| OpenClaw Gateway | `127.0.0.1:18789` | **Native** (`openclaw-gateway` on host) |
+| Chatwoot Rails | `0.0.0.0:3000` | Docker (`chatwoot-rails-1`) |
+| Chatwoot Sidekiq | internal | Docker (`chatwoot-sidekiq-1`) |
+| Chatwoot Redis | `0.0.0.0:6381` | Docker (`chatwoot-redis-1`) |
+| Chatwoot Postgres | `0.0.0.0:5435` | Docker (`chatwoot-postgres-1`) |
+| OpenChat Bridge | `0.0.0.0:8090` | **Docker** (`openchat-bridge`, usually `--network host`) |
+| Bridge Postgres | `0.0.0.0:5434` | Docker (`openchat-bridge-postgres`) |
+
+## Agent rules
+
+- Bridge QR / WhatsApp setup goes Bridge `:8090` → Gateway `:18789`. Chatwoot `:3000` only proxies to the bridge.
+- Restart bridge via Docker (`docker stop/rm/build/run` for `openchat-bridge`), not a host `npm start`, unless the user explicitly asks otherwise.
+- Gateway is native — do not look for an OpenClaw gateway container on `:18789`.
+- Bridge needs host OpenClaw state for `operator.admin` (device pairing). Use `OPENCLAW_STATE_DIR` mounted from `/home/shishir/.openclaw`. Shared gateway token alone causes `missing scope: operator.admin`.
+- Bridge DB URL uses host port **5434**, not 5432/5433/5435.

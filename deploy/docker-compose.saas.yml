@@ -1,0 +1,53 @@
+# GATEWAY_POOL_MODE=fleet is NOT usable as-is with this compose file: openchat-bridge runs
+# in its own bridge-network container here, so its connections to a fleet cell's
+# 127.0.0.1:<port> arrive at the cell as the docker-bridge gateway address, not real
+# loopback — operator.admin gets stripped and WhatsApp QR / admin RPCs fail. Either run
+# openchat-bridge as a native process on the fleet host (see openchat-bridge/README.md),
+# or add `network_mode: host` to the openchat-bridge service below (Linux hosts only) so
+# its 127.0.0.1 is the host's — then drop the `ports:` mapping, it's not needed/works
+# under host networking.
+services:
+  postgres-bridge:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: openchat
+      POSTGRES_PASSWORD: openchat
+      POSTGRES_DB: openchat_bridge
+    ports:
+      - "5433:5432"
+    volumes:
+      - openchat_bridge_pg:/var/lib/postgresql/data
+
+  openchat-bridge:
+    build:
+      context: ../openchat-bridge
+    environment:
+      PORT: 8090
+      DATABASE_URL: postgres://openchat:openchat@postgres-bridge:5432/openchat_bridge
+      OPENCHAT_SECRET: ${OPENCHAT_SECRET:-dev-openchat-secret-change-me-32b}
+      OPENCHAT_PROVISION_SECRET: ${OPENCHAT_PROVISION_SECRET:-dev-provision-secret}
+      CHATWOOT_BASE_URL: ${CHATWOOT_BASE_URL:-http://rails:3000}
+      OPENCLAW_GATEWAY_URL: ${OPENCLAW_GATEWAY_URL:-http://openclaw-gateway:18789}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      OPENCHAT_BRIDGE_PUBLIC_URL: ${OPENCHAT_BRIDGE_PUBLIC_URL:-http://openchat-bridge:8090}
+      GATEWAY_POOL_MODE: ${GATEWAY_POOL_MODE:-shared}
+      OPENCLAW_GATEWAY_IMAGE: ${OPENCLAW_GATEWAY_IMAGE:-openclaw:local}
+      RATE_LIMIT_PER_MINUTE: 30
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "8090:8090"
+    depends_on:
+      - postgres-bridge
+
+  openclaw-gateway:
+    image: ${OPENCLAW_GATEWAY_IMAGE:-openclaw:local}
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-dev-gateway-token}
+      OPENCLAW_TENANT_ID: shared-dev
+      OPENCHAT_BRIDGE_INBOUND_URL: http://openchat-bridge:8090/webhooks/openclaw/inbound
+    ports:
+      - "18789:18789"
+
+volumes:
+  openchat_bridge_pg:

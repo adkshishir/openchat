@@ -1,0 +1,101 @@
+# NOT Fleet-compatible: `openclaw fleet` only manages containers on a local Docker/Podman
+# socket and only publishes cells to host loopback — neither exists across k8s nodes.
+# This manifest still describes the old ad-hoc `docker run`-per-tenant mode (now removed
+# from gateway-pool.ts). Per-tenant isolation on k8s needs a different design (e.g. a
+# controller provisioning one Deployment + PVC per tenant) — not planned yet; the current
+# single-host + `openclaw fleet` path (deploy/docker-compose.saas.yml) is what's active.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openchat-bridge
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: openchat-bridge
+  template:
+    metadata:
+      labels:
+        app: openchat-bridge
+    spec:
+      containers:
+        - name: bridge
+          image: openchat-bridge:latest
+          ports:
+            - containerPort: 8090
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: openchat
+                  key: database-url
+            - name: OPENCHAT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openchat
+                  key: secret
+            - name: OPENCHAT_PROVISION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: openchat
+                  key: provision-secret
+            - name: CHATWOOT_BASE_URL
+              value: http://chatwoot:3000
+            - name: OPENCLAW_GATEWAY_URL
+              value: http://openclaw-gateway:18789
+            - name: GATEWAY_POOL_MODE
+              value: docker
+            - name: OPENCHAT_BRIDGE_PUBLIC_URL
+              value: http://openchat-bridge:8090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openchat-bridge
+spec:
+  selector:
+    app: openchat-bridge
+  ports:
+    - port: 8090
+      targetPort: 8090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openclaw-gateway
+  template:
+    metadata:
+      labels:
+        app: openclaw-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: openclaw:local
+          ports:
+            - containerPort: 18789
+          env:
+            - name: OPENCLAW_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openchat
+                  key: gateway-token
+            - name: OPENCLAW_TENANT_ID
+              value: shared
+            - name: OPENCHAT_BRIDGE_INBOUND_URL
+              value: http://openchat-bridge:8090/webhooks/openclaw/inbound
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openclaw-gateway
+spec:
+  selector:
+    app: openclaw-gateway
+  ports:
+    - port: 18789
+      targetPort: 18789
