@@ -5,6 +5,7 @@ import { useAlert } from 'dashboard/composables';
 import { useConfig } from 'dashboard/composables/useConfig';
 import { useAccount } from 'dashboard/composables/useAccount';
 import { useUISettings } from 'dashboard/composables/useUISettings';
+import { ensureLocaleMessages } from 'dashboard/i18n/lazyLocale';
 
 import FormSelect from 'v3/components/Form/Select.vue';
 
@@ -13,7 +14,8 @@ defineProps({
   description: { type: String, default: '' },
 });
 
-const { t, locale } = useI18n();
+const i18n = useI18n();
+const { t, locale } = i18n;
 const { updateUISettings, uiSettings } = useUISettings();
 const { enabledLanguages } = useConfig();
 const { currentAccount } = useAccount();
@@ -35,6 +37,7 @@ const updateLanguage = async languageCode => {
     if (!languageCode) {
       // Clear preference to use account default
       await updateUISettings({ locale: null });
+      await ensureLocaleMessages(i18n, currentAccount.value.locale);
       locale.value = currentAccount.value.locale;
       useAlert(
         t('PROFILE_SETTINGS.FORM.INTERFACE_SECTION.LANGUAGE.UPDATE_SUCCESS')
@@ -51,6 +54,7 @@ const updateLanguage = async languageCode => {
 
     await updateUISettings({ locale: languageCode });
     // Apply immediately if the user explicitly chose a preference
+    await ensureLocaleMessages(i18n, languageCode);
     locale.value = languageCode;
 
     useAlert(

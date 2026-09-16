@@ -1,10 +1,52 @@
 import type { FastifyInstance } from "fastify";
 import { decryptSecret } from "../crypto.ts";
 import type { ChatwootMessageWebhook } from "../types.ts";
-import { handleAgentBotWebhook, verifyChatwootSignature } from "../services/agent-reply.ts";
-import { getAgentBot, getTenantByAccountId, recordEvent } from "../services/tenants.ts";
+import { handleAgentBotWebhook, normalizePhone, verifyChatwootSignature } from "../services/agent-reply.ts";
+import { getAgentBot, getTenantByAccountId, getTenantByOpenclawAccountId, recordEvent } from "../services/tenants.ts";
 import { syncChannelInbound, syncHumanReplyToChannel, syncWhatsAppInbound } from "../services/sync.ts";
 import { OPENCLAW_NATIVE_CHANNELS } from "../services/channel-types.ts";
+
+/**
+ * OpenClaw's native per-channel retry paths (its own auto-reply resolver failing
+ * and retrying with backoff) re-notify this webhook for the exact same inbound
+ * message, repeatedly, for as long as the upstream failure persists. Each replay
+ * would otherwise become another Chatwoot message and another AI reply — the
+ * customer sees the bot answer the same message over and over.
+ *
+ * Keyed by message id when the gateway sends one; gateways running an older
+ * build don't, so fall back to the sender + exact text, which is what a replay
+ * actually looks like.
+ *
+ * The fallback window is deliberately short. A replay storm re-fires within
+ * seconds, so a tight window still collapses the burst the customer would see;
+ * a long one starts swallowing real messages ("Hi" twice in a conversation is
+ * ordinary), and silently ignoring a customer is a worse failure than answering
+ * them twice. Only the id-keyed path can safely dedupe over minutes.
+ */
+const INBOUND_DEDUPE_WINDOW_MS = 20_000;
+const INBOUND_ID_DEDUPE_WINDOW_MS = 600_000;
+const seenInboundMessages = new Map<string, number>();
+
+function claimInboundMessageOnce(input: {
+  accountId?: string;
+  messageId?: string;
+  from?: string;
+  text?: string;
+}): boolean {
+  const window = input.messageId ? INBOUND_ID_DEDUPE_WINDOW_MS : INBOUND_DEDUPE_WINDOW_MS;
+  const identity = input.messageId ? `id:${input.messageId}` : `msg:${input.from ?? ""}:${input.text ?? ""}`;
+  const key = `${input.accountId ?? ""}:${identity}`;
+  const now = Date.now();
+  const prev = seenInboundMessages.get(key);
+  if (prev && now - prev < window) return false;
+  seenInboundMessages.set(key, now);
+  if (seenInboundMessages.size > 500) {
+    for (const [k, ts] of seenInboundMessages) {
+      if (now - ts > INBOUND_ID_DEDUPE_WINDOW_MS) seenInboundMessages.delete(k);
+    }
+  }
+  return true;
+}
 
 export async function registerWebhookRoutes(app: FastifyInstance) {
   app.post("/webhooks/chatwoot/:accountId", async (request, reply) => {
@@ -47,19 +89,11 @@ export async function registerWebhookRoutes(app: FastifyInstance) {
         payload.conversation?.meta?.sender?.identifier ??
         payload.conversation?.meta?.sender?.phone_number ??
         null;
-      // WhatsApp destinations are phone numbers and need E.164 formatting; other channels
-      // (Discord snowflake IDs, etc.) use their raw identifier as-is — reformatting would
-      // corrupt them (e.g. a Discord id is all digits and would get a bogus "+" prepended).
-      const to =
-        link?.channelType === "whatsapp"
-          ? rawTo
-            ? rawTo.startsWith("+")
-              ? rawTo
-              : rawTo.replace(/\D/g, "").length === 10 && rawTo.replace(/\D/g, "").startsWith("9")
-                ? `+977${rawTo.replace(/\D/g, "")}`
-                : `+${rawTo.replace(/\D/g, "")}`
-            : null
-          : rawTo;
+      // WhatsApp destinations are phone numbers (or a privacy-mode "@lid" address) and
+      // need normalizing; other channels (Discord snowflake IDs, etc.) use their raw
+      // identifier as-is — reformatting would corrupt them (e.g. a Discord id is all
+      // digits and would get a bogus "+" prepended).
+      const to = link?.channelType === "whatsapp" ? normalizePhone(rawTo) : rawTo;
       const needsRelay =
         link && (link.channelType === "whatsapp" || OPENCLAW_NATIVE_CHANNELS.has(link.channelType));
       if (needsRelay && link && to && payload.content?.trim()) {
@@ -102,17 +136,32 @@ export async function registerWebhookRoutes(app: FastifyInstance) {
       from?: string;
       text?: string;
       account_id?: string;
+      message_id?: string;
     };
 
-    // Resolve Chatwoot tenant before observability insert — OpenClaw may send
-    // OPENCLAW_TENANT_ID=shared-dev which is not a tenants.id UUID.
+    // Resolve tenant primarily by which OpenClaw account slot actually received the
+    // message (channel_links.openclaw_account_id) — in shared-gateway mode OpenClaw
+    // sends the same chatwoot_account_id on every webhook regardless of which
+    // tenant's channel account the message came in on, so that field alone
+    // misroutes every tenant but the first onto tenant 1. Fall back to it only
+    // when no channel_link matches (e.g. body.account_id missing/unrecognized).
+    const byAccountId = body.account_id ? await getTenantByOpenclawAccountId(body.account_id) : null;
     const accountId =
-      typeof body.chatwoot_account_id === "number" && body.chatwoot_account_id > 0
+      byAccountId?.chatwootAccountId ??
+      (typeof body.chatwoot_account_id === "number" && body.chatwoot_account_id > 0
         ? body.chatwoot_account_id
-        : 1;
-    const tenant = await getTenantByAccountId(accountId);
+        : 1);
+    const tenant = byAccountId ?? (await getTenantByAccountId(accountId));
 
-    if (body.channel && body.from && body.text) {
+    const fresh =
+      Boolean(body.channel && body.from && body.text) &&
+      claimInboundMessageOnce({
+        accountId: body.account_id,
+        messageId: body.message_id,
+        from: body.from,
+        text: body.text,
+      });
+    if (fresh) {
       const channel = String(body.channel).toLowerCase();
       try {
         if (channel === "whatsapp") {

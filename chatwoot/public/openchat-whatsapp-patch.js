@@ -361,7 +361,7 @@
       }
     }
 
-    function startSocketStream() {
+    async function startSocketStream() {
       const id = accountId();
       if (!id) {
         errorEl.textContent = 'Missing account id.';
@@ -375,7 +375,28 @@
       startBtn.disabled = true;
       startBtn.textContent = 'Linking…';
 
-      const ws = new WebSocket(bridgeWsUrl(id, true));
+      // The bridge's WhatsApp setup WebSocket is the one surface the browser talks
+      // to directly (not proxied through this Rails controller) — use the bridge's
+      // own tenant UUID here, not Chatwoot's guessable sequential account id.
+      let tenantId;
+      try {
+        ({ tenant_id: tenantId } = await api('GET', 'bridge_tenant_id'));
+      } catch (error) {
+        linkingInProgress = false;
+        startBtn.disabled = false;
+        startBtn.textContent = 'Start';
+        errorEl.textContent = error.message || 'Could not resolve tenant.';
+        return;
+      }
+      if (!tenantId) {
+        linkingInProgress = false;
+        startBtn.disabled = false;
+        startBtn.textContent = 'Start';
+        errorEl.textContent = 'Tenant not provisioned yet — try again in a moment.';
+        return;
+      }
+
+      const ws = new WebSocket(bridgeWsUrl(tenantId, true));
       setupSocket = ws;
 
       let finishedOk = false;

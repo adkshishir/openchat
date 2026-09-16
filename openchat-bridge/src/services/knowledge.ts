@@ -61,6 +61,31 @@ function rowToText(row: Record<string, unknown>): string {
     .join(", ");
 }
 
+/** Recommended catalog column names (documented on the training upload page) and common
+ * variants. show_product_cards (mcp/commerce-tools.ts) reads these canonical keys to
+ * render a product card; a catalog that uses none of them still works, just as a plainer
+ * card built from the raw row text instead of a titled/priced/imaged one. */
+const CANONICAL_FIELD_ALIASES: Record<string, string[]> = {
+  name: ["name", "title", "product", "product_name"],
+  price: ["price", "cost", "amount"],
+  image_url: ["image_url", "image", "img", "photo", "picture"],
+  description: ["description", "desc", "details", "summary"],
+};
+
+function withCanonicalCatalogFields(row: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...row };
+  const lowerKeys = Object.keys(row).map((key) => [key.toLowerCase().trim(), key] as const);
+  for (const [canonical, aliases] of Object.entries(CANONICAL_FIELD_ALIASES)) {
+    if (normalized[canonical] !== undefined) continue;
+    const match = lowerKeys.find(([lower]) => aliases.includes(lower));
+    if (match) {
+      const value = row[match[1]];
+      if (value !== "" && value !== null && value !== undefined) normalized[canonical] = value;
+    }
+  }
+  return normalized;
+}
+
 export async function ingestDocument(input: {
   tenantId: string;
   filename: string;
@@ -76,7 +101,7 @@ export async function ingestDocument(input: {
     for (const row of rows) {
       const content = rowToText(row);
       if (content.trim()) {
-        items.push({ sourceType: "product", content, metadata: row });
+        items.push({ sourceType: "product", content, metadata: withCanonicalCatalogFields(row) });
       }
     }
   } else {
@@ -152,18 +177,30 @@ export async function searchKnowledge(
   tenantId: string,
   queryText: string,
   topK = config.knowledgeTopK,
+  sourceType?: "document" | "product",
 ): Promise<KnowledgeMatch[]> {
   const trimmed = queryText.trim();
   if (!trimmed) return [];
-  const rows = await query<{
-    source_id: string;
-    source_type: string;
-    content: string;
-    metadata: Record<string, unknown>;
-    embedding: number[];
-  }>("SELECT source_id, source_type, content, metadata, embedding FROM knowledge_chunks WHERE tenant_id = $1", [
-    tenantId,
-  ]);
+  const rows = sourceType
+    ? await query<{
+        source_id: string;
+        source_type: string;
+        content: string;
+        metadata: Record<string, unknown>;
+        embedding: number[];
+      }>(
+        "SELECT source_id, source_type, content, metadata, embedding FROM knowledge_chunks WHERE tenant_id = $1 AND source_type = $2",
+        [tenantId, sourceType],
+      )
+    : await query<{
+        source_id: string;
+        source_type: string;
+        content: string;
+        metadata: Record<string, unknown>;
+        embedding: number[];
+      }>("SELECT source_id, source_type, content, metadata, embedding FROM knowledge_chunks WHERE tenant_id = $1", [
+        tenantId,
+      ]);
   if (!rows.length) return [];
 
   const queryEmbedding = await embedText(trimmed);

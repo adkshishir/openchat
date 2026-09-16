@@ -1,4 +1,18 @@
 {
+  "OPENCHAT_COPILOT": {
+    "TITLE": "Copilot",
+    "DESCRIPTION": "Chat in plain language to set up and manage this account — the copilot performs the action for you.",
+    "ASSISTANT_NAME": "Copilot",
+    "LOADER": "Working on it…",
+    "ERROR": "Something went wrong talking to the copilot. Please try again.",
+    "EMPTY_TITLE": "What would you like to set up?",
+    "EMPTY_DESCRIPTION": "Ask the copilot to configure your account — it can take action directly, not just explain how.",
+    "PROMPTS": {
+      "CREATE_WIDGET": "Create a web widget for my website",
+      "LIST_CHANNELS": "What channels do I have connected?",
+      "CONNECT_WHATSAPP": "Connect WhatsApp"
+    }
+  },
   "PROFILE_SETTINGS": {
     "LINK": "Profile Settings",
     "TITLE": "Profile Settings",
@@ -345,6 +359,8 @@
     "CANNED_RESPONSES": "Canned Responses",
     "INTEGRATIONS": "Integrations",
     "OPENCLAW": "OpenClaw",
+    "OPENCLAW_ORDERS": "Orders",
+    "OPENCHAT_COPILOT": "Copilot",
     "DATA": "Data",
     "PROFILE_SETTINGS": "Profile Settings",
     "ACCOUNT_SETTINGS": "Account Settings",

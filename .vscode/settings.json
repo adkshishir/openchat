@@ -1,0 +1,12 @@
+{
+  "liveServer.settings.ignoreFiles": [
+    ".vscode/**",
+    ".git/**",
+    "**/*.scss",
+    "**/*.sass",
+    "chatwoot/**",
+    "openchat-bridge/**",
+    "openclaw/**",
+    "deploy/**"
+  ]
+}

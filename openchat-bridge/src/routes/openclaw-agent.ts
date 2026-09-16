@@ -26,8 +26,17 @@ function stateRoot(tenant: Tenant | null): string {
   return config.openclawStateDir?.trim() || path.join(process.env.HOME || "/home/shishir", ".openclaw");
 }
 
+/** In fleet mode the tenant's cell already only ever holds that tenant's own agent, so
+ * its plain "workspace" dir is already isolated. In shared mode, many tenants' agents
+ * live under one root — use the same `workspace-<agentId>` subdirectory OpenClaw itself
+ * gives any non-default agent (see ensureTenantAgentConfigured) so training one tenant
+ * can never write into another tenant's (or the unused default "main" agent's) files. */
 function workspaceDir(tenant: Tenant | null): string {
-  return path.join(stateRoot(tenant), "workspace");
+  const root = stateRoot(tenant);
+  if (config.gatewayPoolMode === "fleet" || !tenant) {
+    return path.join(root, "workspace");
+  }
+  return path.join(root, `workspace-${tenant.openclawTenantId}`);
 }
 
 function resolveTrainFile(tenant: Tenant | null, name: string): string | null {

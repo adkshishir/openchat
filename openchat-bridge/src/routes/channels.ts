@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { decryptSecret } from "../crypto.ts";
 import {
   deleteChannelLinkByInbox,
+  findWhatsAppNumberOwner,
   getChannelLinkByInbox,
   getTenantByAccountId,
   teardownTenant,
@@ -140,14 +141,35 @@ export async function registerChannelRoutes(app: FastifyInstance) {
       openclaw_account_id?: string;
     };
     if (!body.inbox_id) return reply.code(400).send({ error: "inbox_id_required" });
+    const openclawAccountId = body.openclaw_account_id ?? tenant.openclawTenantId;
+
+    // One WhatsApp number belongs to one tenant. Two tenants on the same number
+    // means two sessions racing for the same phone; WhatsApp terminates one with
+    // a 401 and that tenant silently stops receiving messages. Refuse the link
+    // rather than hand the operator a channel that looks connected but is dead.
+    const gateway = new OpenClawGatewayClient(tenant.gatewayUrl, decryptSecret(tenant.gatewayTokenEnc));
+    const waNumber = gateway.whatsAppLinkedNumber(openclawAccountId);
+    if (waNumber) {
+      const owner = await findWhatsAppNumberOwner({ waNumber, excludeTenantId: tenant.id });
+      if (owner) {
+        return reply.code(409).send({
+          error: "whatsapp_number_already_linked",
+          wa_number: waNumber,
+          linked_account_id: owner.chatwootAccountId,
+          message: `WhatsApp number ${waNumber} is already connected to account ${owner.chatwootAccountId}. Disconnect it there first.`,
+        });
+      }
+    }
+
     const link = await upsertChannelLink({
       tenantId: tenant.id,
       channelType: "whatsapp",
       chatwootInboxId: body.inbox_id,
-      openclawAccountId: body.openclaw_account_id ?? tenant.openclawTenantId,
+      openclawAccountId,
       metadata: {
         inboxIdentifier: body.inbox_identifier,
         provider: "openclaw",
+        waNumber,
       },
     });
     return {

@@ -582,6 +582,13 @@ const menuItems = computed(() => {
         },
       ],
     },
+    {
+      name: 'Openchat Copilot',
+      label: t('SIDEBAR.OPENCHAT_COPILOT'),
+      icon: 'i-lucide-sparkles',
+      to: accountScopedRoute('openchat_copilot_index'),
+      activeOn: ['openchat_copilot_index'],
+    },
     ...(isCallsAvailable.value
       ? [
           {
@@ -904,6 +911,12 @@ const menuItems = computed(() => {
           label: t('SIDEBAR.OPENCLAW'),
           icon: 'i-lucide-brain-circuit',
           to: accountScopedRoute('settings_openclaw_knowledge'),
+        },
+        {
+          name: 'Settings OpenClaw Orders',
+          label: t('SIDEBAR.OPENCLAW_ORDERS'),
+          icon: 'i-lucide-shopping-cart',
+          to: accountScopedRoute('settings_openclaw_orders'),
         },
         ...(hasDataImport.value
           ? [

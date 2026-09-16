@@ -5,6 +5,7 @@ export function notifyOpenChatBridge(event: {
   from: string;
   text: string;
   accountId?: string;
+  messageId?: string;
 }): void {
   const url = inboundUrl();
   if (!url || !event.from || !event.text) {
@@ -19,6 +20,7 @@ export function notifyOpenChatBridge(event: {
     from: event.from,
     text: event.text,
     account_id: event.accountId,
+    message_id: event.messageId,
   });
   void fetch(url, {
     method: "POST",

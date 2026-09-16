@@ -34,6 +34,10 @@ class OpenchatAPI extends ApiClient {
     return axios.get(`${this.url}/channels`);
   }
 
+  getStatus() {
+    return axios.get(`${this.url}/openclaw_status`);
+  }
+
   connectChannel(data) {
     return axios.post(`${this.url}/channel_connect`, data);
   }
@@ -61,6 +65,14 @@ class OpenchatAPI extends ApiClient {
 
   searchKnowledge(query) {
     return axios.post(`${this.url}/knowledge/search`, { query });
+  }
+
+  getOrders() {
+    return axios.get(`${this.url}/orders`);
+  }
+
+  updateOrderStatus(id, status) {
+    return axios.patch(`${this.url}/orders/${id}`, { status });
   }
 }
 

@@ -61,13 +61,16 @@ class Channel::WebWidget < ApplicationRecord
     'Website'
   end
 
+  # Vite serves and builds entrypoints as ES modules, so the injected tag must be
+  # type=module — a classic script throws on the SDK's own import statements.
   def web_widget_script
     "
     <script>
       (function(d,t) {
         var BASE_URL=\"#{ENV.fetch('FRONTEND_URL', '')}\";
         var g=d.createElement(t),s=d.getElementsByTagName(t)[0];
-        g.src=BASE_URL+\"/packs/js/sdk.js\";
+        g.type=\"module\";
+        g.src=BASE_URL+\"#{ViteRuby.instance.manifest.path_for('sdk')}\";
         g.async = true;
         s.parentNode.insertBefore(g,s);
         g.onload=function(){

@@ -9,6 +9,8 @@ export type Tenant = {
   status: TenantStatus;
   aiEnabled: boolean;
   billingCustomerId: string | null;
+  /** Business-authored instructions injected into every agent reply for this tenant only. */
+  customPrompt: string;
   createdAt: Date;
 };
 
@@ -60,6 +62,23 @@ export type KnowledgeMatch = {
   content: string;
   metadata: Record<string, unknown>;
   score: number;
+};
+
+export type OrderStatus = "new" | "fulfilled" | "cancelled";
+
+export type Order = {
+  id: string;
+  tenantId: string;
+  chatwootConversationId: number;
+  productName: string;
+  productPrice: string | null;
+  /** Chosen option for a product with variants, e.g. "Switch: Brown". */
+  variant: string | null;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  status: OrderStatus;
+  createdAt: Date;
 };
 
 export type ChatwootMessageWebhook = {

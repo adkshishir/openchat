@@ -4,6 +4,7 @@ class OpenchatPolicy < ApplicationPolicy
   end
 
   alias web_widget? manage?
+  alias agent_chat? manage?
   alias settings? manage?
   alias update_settings? manage?
   alias whatsapp_start? manage?

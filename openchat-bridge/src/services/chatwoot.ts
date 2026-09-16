@@ -78,6 +78,12 @@ export class ChatwootClient {
       headers: this.headers(),
       body: JSON.stringify({
         name,
+        // Chatwoot defaults every new inbox to auto-assignment on. That fights the
+        // bot: the moment a conversation is opened, Chatwoot hands it to a human
+        // agent, and handleAgentBotWebhook's decideHandoff then sees humanAssignee
+        // and skips replying forever. Escalated/handoff conversations still land in
+        // the inbox's Unassigned view for a human to claim manually.
+        enable_auto_assignment: false,
         channel: { type: "api", webhook_url: webhookUrl },
       }),
     });

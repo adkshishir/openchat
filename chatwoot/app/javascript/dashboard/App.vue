@@ -21,6 +21,7 @@ import {
 } from './helper/pushHelper';
 import ReconnectService from 'dashboard/helper/ReconnectService';
 import { useUISettings } from 'dashboard/composables/useUISettings';
+import { ensureLocaleMessages } from 'dashboard/i18n/lazyLocale';
 
 export default {
   name: 'App',
@@ -100,8 +101,9 @@ export default {
       const mql = window.matchMedia('(prefers-color-scheme: dark)');
       mql.onchange = e => setColorTheme(e.matches);
     },
-    setLocale(locale) {
+    async setLocale(locale) {
       if (locale) {
+        await ensureLocaleMessages(this.$root.$i18n, locale);
         this.$root.$i18n.locale = locale;
       }
     },

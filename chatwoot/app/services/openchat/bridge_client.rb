@@ -13,6 +13,9 @@ class Openchat::BridgeClient
   WHATSAPP_READ_TIMEOUT = 55
   # Embedding a whole spreadsheet locally (Ollama) row-by-row is slow.
   KNOWLEDGE_UPLOAD_READ_TIMEOUT = 120
+  # The admin copilot's agent turn may run one or more tool calls (e.g. creating
+  # a web-widget inbox) before it replies, well past the default read timeout.
+  AGENT_CHAT_READ_TIMEOUT = 60
 
   def initialize(base_url: ENV.fetch('OPENCHAT_BRIDGE_URL', 'http://localhost:8090'))
     @base_url = base_url.to_s.chomp('/')
@@ -71,8 +74,11 @@ class Openchat::BridgeClient
     get("/tenants/#{account_id}/settings")
   end
 
-  def update_settings(account_id:, ai_enabled:)
-    patch("/tenants/#{account_id}/settings", { ai_enabled: ai_enabled })
+  def update_settings(account_id:, ai_enabled: nil, custom_prompt: nil)
+    body = {}
+    body[:ai_enabled] = ai_enabled unless ai_enabled.nil?
+    body[:custom_prompt] = custom_prompt unless custom_prompt.nil?
+    patch("/tenants/#{account_id}/settings", body)
   end
 
   def start_whatsapp(account_id:, force: true)
@@ -86,6 +92,10 @@ class Openchat::BridgeClient
       {},
       read_timeout: WHATSAPP_READ_TIMEOUT
     )
+  end
+
+  def admin_chat(account_id:, message:, history: '')
+    post("/tenants/#{account_id}/agent/admin-chat", { message: message, history: history }, read_timeout: AGENT_CHAT_READ_TIMEOUT)
   end
 
   def start_model_auth(account_id:, provider:)
@@ -137,6 +147,14 @@ class Openchat::BridgeClient
 
   def search_knowledge(account_id:, query:)
     post("/tenants/#{account_id}/knowledge/search", { query: query })
+  end
+
+  def orders(account_id:)
+    get("/tenants/#{account_id}/orders")
+  end
+
+  def update_order(account_id:, order_id:, status:)
+    patch("/tenants/#{account_id}/orders/#{order_id}", { status: status })
   end
 
   # Inbox deleted in Chatwoot -> drop its OpenClaw channel link + conversation maps.

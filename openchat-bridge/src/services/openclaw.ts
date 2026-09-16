@@ -5,6 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 import os from "node:os";
+import { config } from "../config.ts";
 
 type RpcResult = { ok: boolean; payload?: unknown; error?: { message?: string } };
 type LoginResult = { qrDataUrl?: string; connected?: boolean; message?: string };
@@ -224,6 +225,41 @@ async function loadLoginQrModule(): Promise<LoginQrModule | null> {
   }
 }
 
+/**
+ * Every token-based channel (Telegram, Discord, ...) is provisioned with
+ * dmPolicy:"open"/allowFrom:["*"] via channel-catalog.ts's buildConfig. WhatsApp
+ * is QR-based and skips that path entirely, so without this it keeps OpenClaw's
+ * own default (dmPolicy:"pairing", allowFrom:[selfE164]) — the bot then only
+ * ever replies to the number that scanned the QR, not real customers.
+ * Applied once per accountId per process; a config.patch RPC on every poll
+ * would be wasteful and this only needs to happen once per link.
+ */
+const openedWhatsAppDmPolicy = new Set<string>();
+
+/**
+ * Keyed by gatewayUrl (not tenantId): in shared gateway-pool mode every tenant
+ * points at the same OpenClaw process, so this naturally dedupes to one patch;
+ * in fleet mode each tenant's own gateway gets its own idempotent one-time patch.
+ * See OpenClawGatewayClient#ensureAdminAgentConfigured.
+ */
+const adminAgentConfiguredGateways = new Set<string>();
+
+/** MCP server name === OpenClaw agent id for the admin copilot; tool ids are exposed
+ * to the model as `${serverName}__${toolId}`, so this name also drives the tools.allow glob. */
+export const ADMIN_AGENT_ID = "openchat-admin";
+
+/** MCP server registry key for the commerce tools (mcp/commerce-tools.ts), shared by
+ * every tenant's own agent id — unlike the admin persona, tenants each have a distinct
+ * agentId but all point at this one commerce MCP server. */
+export const COMMERCE_MCP_SERVER_ID = "openchat-commerce";
+
+/**
+ * Keyed by `${gatewayUrl}:${agentId}` — each tenant gets its own idempotent
+ * one-time patch, same dedup rationale as adminAgentConfiguredGateways.
+ * See OpenClawGatewayClient#ensureTenantAgentConfigured.
+ */
+const tenantAgentsConfiguredGateways = new Set<string>();
+
 export class OpenClawGatewayClient {
   private readonly gatewayUrl: string;
   private readonly token: string;
@@ -371,12 +407,52 @@ export class OpenClawGatewayClient {
     });
   }
 
-  async invokeAgent(input: { sessionKey: string; message: string; history?: string }): Promise<string> {
-    const httpResult = await this.invokeAgentHttp(input);
-    if (httpResult != null && httpResult.trim()) {
-      return httpResult.trim();
-    }
+  /**
+   * Invokes the customer-facing agent for one tenant, isolated by agentId: each
+   * tenant gets its own OpenClaw agent (own workspace/SOUL.md/AGENTS.md, own session
+   * store) via ensureTenantAgentConfigured, instead of every tenant sharing the
+   * single "main" agent. Always goes through the agent RPC (never the
+   * /openchat/agent HTTP fast path some earlier revisions of this method used):
+   * that endpoint always runs the default agent and ignores agentId, which would
+   * silently put this tenant's conversation on the wrong (shared) agent.
+   */
+  async invokeAgent(input: {
+    sessionKey: string;
+    message: string;
+    history?: string;
+    agentId: string;
+    extraSystemPrompt?: string;
+  }): Promise<string> {
+    await this.ensureTenantAgentConfigured(input.agentId);
+    return this.invokeAgentRpc(input);
+  }
 
+  /**
+   * Invokes a non-default agent persona (e.g. "openchat-admin") by id, with an
+   * extra per-turn system prompt. Always goes through the agent RPC, never the
+   * /openchat/agent HTTP fast path (openchat-http.ts): that endpoint ignores
+   * agentId/extraSystemPrompt and always runs the default agent — using it here
+   * would silently run the wrong (unrestricted-tools) persona instead of the
+   * sandboxed admin one.
+   */
+  async invokeAdminAgent(input: {
+    sessionKey: string;
+    message: string;
+    history?: string;
+    agentId: string;
+    extraSystemPrompt: string;
+  }): Promise<string> {
+    await this.ensureAdminAgentConfigured();
+    return this.invokeAgentRpc(input);
+  }
+
+  private async invokeAgentRpc(input: {
+    sessionKey: string;
+    message: string;
+    history?: string;
+    agentId?: string;
+    extraSystemPrompt?: string;
+  }): Promise<string> {
     const idempotencyKey = `openchat-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const accepted = await this.connectAndRequest(
       "agent",
@@ -385,6 +461,8 @@ export class OpenClawGatewayClient {
         message: input.history ? `${input.history}\n\n${input.message}` : input.message,
         idempotencyKey,
         deliver: false,
+        ...(input.agentId ? { agentId: input.agentId } : {}),
+        ...(input.extraSystemPrompt ? { extraSystemPrompt: input.extraSystemPrompt } : {}),
       },
       30_000,
     );
@@ -425,7 +503,7 @@ export class OpenClawGatewayClient {
 
     const history = await this.connectAndRequest(
       "chat.history",
-      { sessionKey: input.sessionKey, limit: 40 },
+      { sessionKey: input.sessionKey, limit: 40, ...(input.agentId ? { agentId: input.agentId } : {}) },
       30_000,
     );
     if (!history.ok) {
@@ -444,42 +522,29 @@ export class OpenClawGatewayClient {
     return "";
   }
 
-  private async invokeAgentHttp(input: { sessionKey: string; message: string; history?: string }) {
-    try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (this.token) headers.Authorization = `Bearer ${this.token}`;
-      const response = await fetch(`${this.httpBase()}/openchat/agent`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(input),
-      });
-      if (!response.ok) {
-        return null;
-      }
-      const body = (await response.json()) as { text?: string };
-      const text = body.text?.trim() ?? "";
-      return text || null;
-    } catch {
-      return null;
-    }
-  }
-
   async rpc(method: string, params: Record<string, unknown> = {}, timeoutMs = 60_000): Promise<RpcResult> {
     return this.connectAndRequest(method, params, timeoutMs);
   }
 
-  async sendWhatsApp(to: string, text: string, accountId?: string) {
-    return this.sendMessage("whatsapp", to, text, accountId);
+  async sendWhatsApp(to: string, text: string, accountId?: string, agentId?: string) {
+    return this.sendMessage("whatsapp", to, text, accountId, agentId);
   }
 
-  /** Generic channel send — same "send" RPC WhatsApp uses, for any OpenClaw channel. */
-  async sendMessage(channel: string, to: string, text: string, accountId?: string) {
+  /**
+   * Generic channel send — same "send" RPC WhatsApp uses, for any OpenClaw channel.
+   * `agentId` disambiguates which tenant's agent owns this send's session key: once
+   * more than one agent is configured (see ensureTenantAgentConfigured), the gateway
+   * rejects a bare "send" with "session key \"main\" has no explicit owner" unless
+   * told which agent it belongs to.
+   */
+  async sendMessage(channel: string, to: string, text: string, accountId?: string, agentId?: string) {
     const rpc = await this.rpc("send", {
       channel,
       to,
       message: text,
       idempotencyKey: `openchat-${channel}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
       ...(accountId ? { accountId } : {}),
+      ...(agentId ? { agentId } : {}),
     });
     if (!rpc.ok) {
       throw new Error(rpc.error?.message ?? `${channel} send failed`);
@@ -498,6 +563,22 @@ export class OpenClawGatewayClient {
    * its requested scopes as-is, including operator.admin — see
    * shouldPreserveLocalCliSharedAuthScopes in openclaw's handshake-auth-helpers.ts.
    */
+
+  async openWhatsAppDmPolicy(accountId?: string): Promise<void> {
+    if (!accountId || openedWhatsAppDmPolicy.has(accountId)) return;
+    openedWhatsAppDmPolicy.add(accountId);
+    try {
+      await this.configPatch({
+        channels: { whatsapp: { accounts: { [accountId]: { dmPolicy: "open", allowFrom: ["*"] } } } },
+      });
+    } catch (error) {
+      openedWhatsAppDmPolicy.delete(accountId);
+      console.warn(
+        `[openchat-bridge] failed to open WhatsApp dmPolicy for ${accountId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
 
   /**
    * Prefer gateway RPC for WhatsApp QR. In-process login-qr fights the native
@@ -530,6 +611,9 @@ export class OpenClawGatewayClient {
       throw new Error(rpc.error?.message ?? "web.login.start failed");
     }
     const payload = (rpc.payload ?? {}) as LoginResult;
+    if (payload.connected) {
+      await this.openWhatsAppDmPolicy(accountId);
+    }
     if (payload.qrDataUrl || payload.connected) {
       return payload;
     }
@@ -544,6 +628,9 @@ export class OpenClawGatewayClient {
       timeoutMs,
       accountId,
     });
+    if (result.connected) {
+      await this.openWhatsAppDmPolicy(accountId);
+    }
     return {
       qrDataUrl: result.qrDataUrl,
       connected: Boolean(result.connected),
@@ -554,6 +641,29 @@ export class OpenClawGatewayClient {
   isWhatsAppLinked(accountId = "default"): boolean {
     const authDir = path.join(resolveOpenClawStateDir(), "credentials", "whatsapp", accountId);
     return fs.existsSync(path.join(authDir, "creds.json"));
+  }
+
+  /**
+   * E.164 number this account's WhatsApp session is linked to, read from the
+   * Baileys creds (`me.id` looks like "9779748769180:7@s.whatsapp.net" — the
+   * ":7" is the linked-device index, not part of the number). Returns null when
+   * the account has never been linked. Used to keep one number on one tenant.
+   */
+  whatsAppLinkedNumber(accountId = "default"): string | null {
+    const credsPath = path.join(
+      resolveOpenClawStateDir(),
+      "credentials",
+      "whatsapp",
+      accountId,
+      "creds.json",
+    );
+    try {
+      const creds = JSON.parse(fs.readFileSync(credsPath, "utf8")) as { me?: { id?: string } };
+      const digits = creds.me?.id?.split(/[:@]/)[0]?.replace(/\D/g, "");
+      return digits ? `+${digits}` : null;
+    } catch {
+      return null;
+    }
   }
 
   async waitWhatsAppLogin(
@@ -578,7 +688,11 @@ export class OpenClawGatewayClient {
         clientTimeoutMs,
       );
       if (rpc.ok) {
-        return (rpc.payload ?? {}) as LoginResult;
+        const payload = (rpc.payload ?? {}) as LoginResult;
+        if (payload.connected) {
+          await this.openWhatsAppDmPolicy(accountId);
+        }
+        return payload;
       }
 
       const errMsg = rpc.error?.message ?? "web.login.wait failed";
@@ -599,6 +713,9 @@ export class OpenClawGatewayClient {
           accountId,
           currentQrDataUrl,
         });
+        if (result.connected) {
+          await this.openWhatsAppDmPolicy(accountId);
+        }
         return {
           qrDataUrl: result.qrDataUrl,
           connected: Boolean(result.connected),
@@ -634,6 +751,113 @@ export class OpenClawGatewayClient {
       raw?: string;
       exists?: boolean;
     };
+  }
+
+  /**
+   * Idempotently registers the "openchat-admin" agent persona + its MCP server on
+   * this gateway (once per gatewayUrl — see adminAgentConfiguredGateways). Applies
+   * to every gateway pool mode identically: tenant isolation for the tools this
+   * agent exposes comes entirely from the Layer-B admin action token verified inside
+   * each tool call (mcp/admin-tools.ts), not from this OpenClaw-side config, so one
+   * shared agent/mcp-server entry is correct whether tenants share a gateway
+   * (GATEWAY_POOL_MODE=shared) or each has its own (fleet).
+   */
+  async ensureAdminAgentConfigured(): Promise<void> {
+    if (adminAgentConfiguredGateways.has(this.gatewayUrl)) return;
+    adminAgentConfiguredGateways.add(this.gatewayUrl);
+    try {
+      await this.configPatch({
+        mcp: {
+          servers: {
+            [ADMIN_AGENT_ID]: {
+              url: `${config.bridgePublicUrl.replace(/\/$/, "")}/mcp/admin`,
+              transport: "streamable-http",
+            },
+          },
+        },
+        agents: {
+          // OpenClaw refuses a multi-agent roster (more than one agents.entries key)
+          // without an explicit ownership marker — verified live against a real
+          // gateway: "agents.ownership: multi-agent rosters require
+          // agents.ownership=\"explicit\" or one legacy default=true marker".
+          ownership: "explicit",
+          entries: {
+            [ADMIN_AGENT_ID]: {
+              // "minimal" excludes the "bundle-mcp" meta tool id from its base allow
+              // list (tool-catalog.ts CORE_TOOL_PROFILES) — MCP-sourced tools never
+              // enter the candidate pool under it, so explicit `allow` below has
+              // nothing to match ("no registered tools matched", verified live).
+              // "messaging" includes "bundle-mcp"; explicit `allow` then narrows the
+              // candidate pool down to only this server's tools.
+              tools: { profile: "messaging", allow: [`${ADMIN_AGENT_ID}__*`] },
+              // Fixed product persona, not a personality the operator picks per
+              // install — without this, OpenClaw's own onboarding checks
+              // agents.entries.*.identity.name (config-level, separate from the
+              // IDENTITY.md workspace file) and has the model ask the user to name
+              // it on every turn.
+              identity: { name: "OpenChat Copilot", emoji: "🤖" },
+            },
+          },
+        },
+      });
+    } catch (error) {
+      adminAgentConfiguredGateways.delete(this.gatewayUrl);
+      throw error;
+    }
+  }
+
+  /**
+   * Idempotently registers a per-tenant OpenClaw agent persona (once per
+   * gatewayUrl+agentId — see tenantAgentsConfiguredGateways). This is the tenant
+   * isolation boundary: an agent with no explicit `workspace` gets its own
+   * `workspace-<agentId>` subdirectory, own session store, and own auth profile,
+   * so training one tenant's SOUL.md/AGENTS.md can never affect another tenant's
+   * agent, whether the gateway is shared (GATEWAY_POOL_MODE=shared) or per-tenant
+   * (fleet) — a fleet cell only ever hosts its own tenant's agent either way.
+   */
+  async ensureTenantAgentConfigured(agentId: string): Promise<void> {
+    const key = `${this.gatewayUrl}:${agentId}`;
+    if (tenantAgentsConfiguredGateways.has(key)) return;
+    tenantAgentsConfiguredGateways.add(key);
+    try {
+      await this.configPatch({
+        mcp: {
+          // Same server entry for every tenant — commerce tools authorize per-call
+          // from a verified token (mcp/commerce-token.ts), not from OpenClaw config.
+          servers: {
+            [COMMERCE_MCP_SERVER_ID]: {
+              url: `${config.bridgePublicUrl.replace(/\/$/, "")}/mcp/commerce`,
+              transport: "streamable-http",
+            },
+          },
+        },
+        agents: {
+          // Same multi-agent roster marker ensureAdminAgentConfigured sets —
+          // required once a gateway has more than one agents.entries key.
+          ownership: "explicit",
+          entries: {
+            [agentId]: {
+              // Without this the tenant's customer-facing agent inherits the full
+              // default tool profile — filesystem, shell, the lot. That is both a
+              // customer-facing security hole and a reliability problem: the model
+              // reaches for tools like `ls` mid-conversation and emits a malformed
+              // function call, which some providers reject as a failed generation
+              // (Gemini: MALFORMED_FUNCTION_CALL), producing no reply at all.
+              // "messaging" keeps the bundle-mcp meta tool so MCP tools resolve;
+              // `allow` then narrows the pool to this tenant's commerce tools only.
+              tools: { profile: "messaging", allow: [`${COMMERCE_MCP_SERVER_ID}__*`] },
+              // Same reason as the admin persona: with no identity.name configured,
+              // OpenClaw's onboarding makes the model ask who it should be called —
+              // at the customer, on every turn.
+              identity: { name: "Assistant", emoji: "💬" },
+            },
+          },
+        },
+      });
+    } catch (error) {
+      tenantAgentsConfiguredGateways.delete(key);
+      throw error;
+    }
   }
 
   /**

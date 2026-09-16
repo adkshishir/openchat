@@ -7,8 +7,12 @@ CREATE TABLE IF NOT EXISTS tenants (
   status TEXT NOT NULL DEFAULT 'provisioning',
   ai_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   billing_customer_id TEXT,
+  custom_prompt TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Column added after the initial release; existing tenants rows predate it.
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS custom_prompt TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS channel_links (
   id TEXT PRIMARY KEY,
@@ -22,6 +26,22 @@ CREATE TABLE IF NOT EXISTS channel_links (
   -- that inbound-message lookups (by tenant + channel only) could still hit.
   UNIQUE (tenant_id, channel_type)
 );
+
+-- Older deployments created this table with a three-column unique constraint
+-- (tenant_id, channel_type, chatwoot_inbox_id); upsertChannelLink's
+-- ON CONFLICT (tenant_id, channel_type) target only matches the two-column
+-- form declared above. Idempotently repair pre-existing tables to match.
+ALTER TABLE channel_links DROP CONSTRAINT IF EXISTS channel_links_tenant_id_channel_type_chatwoot_inbox_id_key;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = 'channel_links'::regclass AND conname = 'channel_links_tenant_id_channel_type_key'
+  ) THEN
+    ALTER TABLE channel_links ADD CONSTRAINT channel_links_tenant_id_channel_type_key UNIQUE (tenant_id, channel_type);
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS conversation_map (
   id TEXT PRIMARY KEY,
@@ -73,3 +93,25 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
 );
 
 CREATE INDEX IF NOT EXISTS knowledge_chunks_tenant_idx ON knowledge_chunks (tenant_id);
+
+-- Orders the agent places autonomously via the create_order commerce tool
+-- (mcp/commerce-tools.ts) after collecting product + customer details in chat.
+CREATE TABLE IF NOT EXISTS orders (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  chatwoot_conversation_id INTEGER NOT NULL,
+  product_name TEXT NOT NULL,
+  product_price TEXT,
+  customer_name TEXT NOT NULL,
+  customer_phone TEXT NOT NULL,
+  customer_address TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'new', -- new | fulfilled | cancelled
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS orders_tenant_idx ON orders (tenant_id, created_at DESC);
+
+-- Which option the customer picked when the product has variants (e.g. "Switch: Brown").
+-- Without it an order for a multi-variant product is unfulfillable — the catalog says
+-- Red/Blue/Brown and the order row just says "Bluetooth Mechanical Keyboard".
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS variant TEXT;

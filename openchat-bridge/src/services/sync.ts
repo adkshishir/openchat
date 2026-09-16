@@ -165,7 +165,9 @@ export async function syncHumanReplyToChannel(input: {
     String(tenant.gateway_url),
     decryptSecret(String(tenant.gateway_token_enc)),
   );
-  await gateway.sendMessage(input.channel, input.to, input.content, input.accountId);
+  // agentId disambiguates the send's session owner once multiple agents are
+  // configured (see OpenClawGatewayClient#sendMessage) — this tenant's own agent.
+  await gateway.sendMessage(input.channel, input.to, input.content, input.accountId, String(tenant.openclaw_tenant_id));
   await recordEvent({
     tenantId: input.tenantId,
     kind: `${input.channel}.outbound.human`,

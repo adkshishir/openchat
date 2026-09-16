@@ -39,5 +39,9 @@ class Openchat::AttachOpenclawAgentService
     record.agent_bot = bot
     record.status = :active if record.respond_to?(:status=)
     record.save!
+    # Chatwoot defaults new inboxes to auto-assignment, which hands every conversation
+    # to a human the moment it opens. The reply pipeline then skips the bot for good
+    # (handoff sees an assignee), so a bot-owned inbox must never auto-assign.
+    inbox.update!(enable_auto_assignment: false) if inbox.enable_auto_assignment?
   end
 end

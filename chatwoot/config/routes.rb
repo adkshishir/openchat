@@ -326,12 +326,14 @@ Rails.application.routes.draw do
           resource :openchat, only: [], controller: 'openchat' do
             collection do
               post :web_widget
+              post :agent_chat
               get :settings
               patch :update_settings
               post :whatsapp_start
               get :whatsapp_wait
               post :whatsapp_wait
               post :whatsapp_finalize
+              get :bridge_tenant_id
               get :channels
               post :channel_connect
               post :channel_finalize
@@ -341,6 +343,8 @@ Rails.application.routes.draw do
               post 'knowledge/upload', action: :knowledge_upload
               delete 'knowledge/:id', action: :knowledge_destroy
               post 'knowledge/search', action: :knowledge_search
+              get 'orders', action: :orders_index
+              patch 'orders/:id', action: :orders_update
               get :openclaw_status
               get :openclaw_workspace
               get 'openclaw_workspace/:file', action: :openclaw_workspace_file, constraints: { file: /[\w.\-]+/ }, format: false
@@ -482,6 +486,19 @@ Rails.application.routes.draw do
       end
       # end of account scoped api routes
       # ----------------------------------
+
+      # Machine-to-machine routes the openchat-bridge calls into directly
+      # (shared-secret authenticated, not account-session scoped).
+      namespace :internal do
+        resource :openchat_tools, only: [], controller: 'openchat_tools' do
+          collection do
+            post :web_widget
+            post :channel_inbox
+            post :whatsapp_cloud
+            post :whatsapp_360dialog
+          end
+        end
+      end
 
       namespace :integrations do
         resources :webhooks, only: [:create]

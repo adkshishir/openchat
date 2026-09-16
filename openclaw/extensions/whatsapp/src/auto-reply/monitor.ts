@@ -308,6 +308,7 @@ export async function monitorWebChannel(
                   ),
                   text: String(msg.payload.body ?? ""),
                   accountId: account.accountId,
+                  messageId: msg.event.id,
                 });
                 await onMessage(msg);
               },

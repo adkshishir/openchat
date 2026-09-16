@@ -1,11 +1,16 @@
 import type { Server as HttpServer, IncomingMessage } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { decryptSecret } from "./crypto.ts";
-import { getTenantByAccountId } from "./services/tenants.ts";
+import { getTenantById } from "./services/tenants.ts";
 import { OpenClawGatewayClient } from "./services/openclaw.ts";
 import { query } from "./db.ts";
 
-const STREAM_PATH = /^\/tenants\/(\d+)\/channels\/whatsapp\/setup\/stream\/?$/;
+// Tenant UUID, not Chatwoot's sequential account id — this is the one bridge
+// surface the browser talks to directly (not proxied through Chatwoot's own
+// authenticated API), so a guessable numeric id here would let any tenant probe
+// another tenant's WhatsApp setup stream just by incrementing it.
+const STREAM_PATH =
+  /^\/tenants\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/channels\/whatsapp\/setup\/stream\/?$/i;
 
 type SetupEvent = {
   type: "hello" | "qr" | "status" | "connected" | "error" | "expired";
@@ -33,8 +38,8 @@ async function inboxIdForTenant(tenantId: string): Promise<number | null> {
  * One gateway wait session at a time with long slices so Baileys 515
  * "verifying" handshake can finish without HTTP poll interrupts.
  */
-async function runSetupStream(ws: WebSocket, accountId: number, force: boolean) {
-  const tenant = await getTenantByAccountId(accountId);
+async function runSetupStream(ws: WebSocket, tenantId: string, force: boolean) {
+  const tenant = await getTenantById(tenantId);
   if (!tenant) {
     send(ws, { type: "error", message: "tenant_not_found" });
     ws.close();
@@ -220,11 +225,11 @@ export function attachWhatsAppSetupWebSocket(server: HttpServer) {
       return;
     }
 
-    const accountId = Number(match[1]);
+    const tenantId = match[1];
     const force = url.searchParams.get("force") !== "0";
 
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void runSetupStream(ws, accountId, force);
+      void runSetupStream(ws, tenantId, force);
     });
   });
 }

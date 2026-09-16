@@ -21,12 +21,43 @@ export default {
       searchError: '',
       searchResults: null,
       acceptedExtensions: ACCEPTED_EXTENSIONS,
+      customPrompt: '',
+      isLoadingPrompt: false,
+      isSavingPrompt: false,
+      promptMaxLength: 4000,
     };
   },
   mounted() {
     this.fetchSources();
+    this.fetchPrompt();
   },
   methods: {
+    async fetchPrompt() {
+      this.isLoadingPrompt = true;
+      try {
+        const { data } = await OpenchatAPI.getSettings();
+        this.customPrompt = data.custom_prompt || '';
+      } catch (error) {
+        useAlert(
+          error?.response?.data?.error || 'Could not load agent instructions.'
+        );
+      } finally {
+        this.isLoadingPrompt = false;
+      }
+    },
+    async savePrompt() {
+      this.isSavingPrompt = true;
+      try {
+        await OpenchatAPI.updateSettings({ custom_prompt: this.customPrompt });
+        useAlert('Agent instructions saved.');
+      } catch (error) {
+        useAlert(
+          error?.response?.data?.error || 'Could not save agent instructions.'
+        );
+      } finally {
+        this.isSavingPrompt = false;
+      }
+    },
     async fetchSources() {
       this.isLoadingSources = true;
       try {
@@ -100,18 +131,52 @@ export default {
   <SettingsLayout :is-loading="false">
     <template #header>
       <BaseSettingsHeader
-        title="OpenClaw Knowledge Base"
-        description="Upload documents or a product catalog (JSON, CSV, Excel). OpenClaw's AI automatically looks up relevant matches when replying to customers on WhatsApp and other connected channels."
+        title="OpenClaw Training"
+        description="Train how OpenClaw replies for this business: custom instructions plus documents or a product catalog (JSON, CSV, Excel). Both are private to this account — other businesses on OpenClaw are trained separately."
       />
     </template>
     <template #body>
       <div class="flex-grow flex-shrink overflow-auto max-w-3xl flex flex-col gap-8">
         <div class="border border-n-weak rounded-2xl p-6 flex flex-col gap-3">
+          <h3 class="text-base font-medium text-n-slate-12">Agent instructions</h3>
+          <p class="text-sm text-n-slate-11">
+            Tell OpenClaw how to behave for this business specifically — tone, things to
+            always mention, things to avoid, escalation rules. Applied to every reply on
+            every channel for this account only.
+          </p>
+          <textarea
+            v-model="customPrompt"
+            :disabled="isLoadingPrompt"
+            :maxlength="promptMaxLength"
+            rows="6"
+            placeholder="e.g. You are the assistant for Everest Trekking Co. Always greet customers by their trek name if mentioned. Never quote prices for custom itineraries — offer to connect them with a human for those."
+            class="border border-n-weak rounded-lg px-3 py-2 text-sm bg-n-solid-1 resize-y"
+          />
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-n-slate-11">
+              {{ customPrompt.length }}/{{ promptMaxLength }}
+            </span>
+            <NextButton
+              :is-loading="isSavingPrompt"
+              :disabled="isLoadingPrompt || isSavingPrompt"
+              label="Save instructions"
+              @click="savePrompt"
+            />
+          </div>
+        </div>
+
+        <div class="border border-n-weak rounded-2xl p-6 flex flex-col gap-3">
           <h3 class="text-base font-medium text-n-slate-12">Add a file</h3>
           <p class="text-sm text-n-slate-11">
             Plain docs (.md, .txt) get chunked and indexed as knowledge. Structured files
             (.json, .csv, .xlsx) are parsed row-by-row — each row becomes a searchable product
-            or record.
+            or record, and the AI agent can show them to customers as interactive picker cards
+            and take orders for them directly in the chat.
+          </p>
+          <p class="text-sm text-n-slate-11">
+            For the best-looking product cards, use these column names where you can:
+            <code>name</code>, <code>price</code>, <code>image_url</code>, <code>description</code>.
+            Other column names still work — the agent just falls back to a plainer card.
           </p>
           <input
             ref="fileInput"

@@ -7,16 +7,26 @@ class Api::V1::Accounts::OpenchatController < Api::V1::Accounts::BaseController
 
   def web_widget
     ensure_provisioned!
-    inbox = create_web_widget_inbox
-    attach_openclaw_agent(inbox)
-    Openchat::BridgeClient.new.register_web_widget(account_id: Current.account.id, inbox_id: inbox.id)
-    render json: {
-      id: inbox.id,
-      name: inbox.name,
-      web_widget_script: inbox.channel.web_widget_script,
-      website_token: inbox.channel.website_token,
-      ai_enabled: true
-    }
+    result = Openchat::WebWidgetProvisioner.new(
+      account: Current.account,
+      website_url: params.require(:website_url),
+      widget_color: params[:widget_color],
+      welcome_title: params[:welcome_title],
+      welcome_tagline: params[:welcome_tagline],
+      name: params[:name],
+      user: Current.user
+    ).perform
+    render json: result
+  end
+
+  def agent_chat
+    ensure_provisioned!
+    result = Openchat::BridgeClient.new.admin_chat(
+      account_id: Current.account.id,
+      message: params.require(:message),
+      history: params[:message_history].to_s
+    )
+    render json: { response: result['response'], whatsapp_qr: result['whatsapp_qr'] }
   end
 
   def settings
@@ -25,10 +35,24 @@ class Api::V1::Accounts::OpenchatController < Api::V1::Accounts::BaseController
   end
 
   def update_settings
-    ai_enabled = ActiveModel::Type::Boolean.new.cast(params[:ai_enabled])
-    Current.account.update!(custom_attributes: (Current.account.custom_attributes || {}).merge('openchat_ai_enabled' => ai_enabled))
-    payload = Openchat::BridgeClient.new.update_settings(account_id: Current.account.id, ai_enabled: ai_enabled)
+    ai_enabled = ActiveModel::Type::Boolean.new.cast(params[:ai_enabled]) if params.key?(:ai_enabled)
+    if params.key?(:ai_enabled)
+      Current.account.update!(custom_attributes: (Current.account.custom_attributes || {}).merge('openchat_ai_enabled' => ai_enabled))
+    end
+    payload = Openchat::BridgeClient.new.update_settings(
+      account_id: Current.account.id,
+      ai_enabled: ai_enabled,
+      custom_prompt: params[:custom_prompt]
+    )
     render json: payload
+  end
+
+  # The browser needs this to talk to the bridge's WhatsApp QR WebSocket directly
+  # (the one bridge surface not proxied through this controller) without using
+  # Chatwoot's own guessable sequential account id in that URL.
+  def bridge_tenant_id
+    ensure_provisioned!
+    render json: { tenant_id: Current.account.custom_attributes['openchat_tenant_id'] }
   end
 
   def whatsapp_start
@@ -135,6 +159,20 @@ class Api::V1::Accounts::OpenchatController < Api::V1::Accounts::BaseController
     render json: Openchat::BridgeClient.new.search_knowledge(account_id: Current.account.id, query: params.require(:query))
   end
 
+  def orders_index
+    ensure_provisioned!
+    render json: Openchat::BridgeClient.new.orders(account_id: Current.account.id)
+  end
+
+  def orders_update
+    ensure_provisioned!
+    render json: Openchat::BridgeClient.new.update_order(
+      account_id: Current.account.id,
+      order_id: params.require(:id),
+      status: params.require(:status)
+    )
+  end
+
   def model_auth
     ensure_provisioned!
     render json: Openchat::BridgeClient.new.start_model_auth(
@@ -207,50 +245,10 @@ class Api::V1::Accounts::OpenchatController < Api::V1::Accounts::BaseController
   end
 
   # AgentBot API tokens cannot create inboxes ("not authorized for bots").
-  # Create the API inbox as the signed-in administrator instead.
-  def ensure_openclaw_channel_inbox!(channel_key, inbox_name)
-    existing = Current.account.inboxes.find_by(name: inbox_name, channel_type: 'Channel::Api')
-    if existing
-      sync_api_channel_webhook_secret!(existing.channel)
-      return existing
-    end
-
-    webhook_url = "#{ENV.fetch('OPENCHAT_BRIDGE_URL', 'http://localhost:8090')}/webhooks/chatwoot/#{Current.account.id}"
-    channel = Current.account.api_channels.create!(webhook_url: webhook_url)
-    inbox = Current.account.inboxes.create!(name: inbox_name, channel: channel)
-    InboxMember.find_or_create_by!(inbox: inbox, user: Current.user) if Current.user
-    attach_openclaw_agent(inbox)
-    sync_api_channel_webhook_secret!(channel)
-    inbox
-  end
-
-  # Sync API channel webhook secret with OpenClaw agent bot secret.
-  def sync_api_channel_webhook_secret!(channel)
-    bot = openclaw_agent
-    return unless bot&.secret.present? && channel.respond_to?(:secret=)
-    return if channel.secret == bot.secret
-
-    channel.update!(secret: bot.secret)
-  end
-
-  def create_web_widget_inbox
-    website_url = params.require(:website_url)
-    channel = Current.account.web_widgets.create!(
-      website_url: website_url,
-      widget_color: params[:widget_color].presence || '#1f93ff',
-      welcome_title: params[:welcome_title].presence || Current.account.name,
-      welcome_tagline: params[:welcome_tagline]
-    )
-    inbox = Current.account.inboxes.create!(name: params[:name].presence || Current.account.name, channel: channel)
-    InboxMember.find_or_create_by!(inbox: inbox, user: Current.user) if Current.user
-    inbox
-  end
-
-  def attach_openclaw_agent(inbox)
-    Openchat::AttachOpenclawAgentService.new(account: Current.account).perform(inbox)
-  end
-
-  def openclaw_agent
-    Openchat::AttachOpenclawAgentService.openclaw_bot_for(Current.account)
+  # Create the API inbox as the signed-in administrator instead. The same
+  # provisioning logic (minus Current.user) also backs the admin-copilot's
+  # channel-connect tools via Api::V1::Internal::OpenchatToolsController.
+  def ensure_openclaw_channel_inbox!(_channel_key, inbox_name)
+    Openchat::ChannelInboxProvisioner.new(account: Current.account, inbox_name: inbox_name, user: Current.user).perform
   end
 end

@@ -12,6 +12,7 @@ function mapTenant(row: Record<string, unknown>): Tenant {
     status: row.status as Tenant["status"],
     aiEnabled: Boolean(row.ai_enabled),
     billingCustomerId: row.billing_customer_id ? String(row.billing_customer_id) : null,
+    customPrompt: row.custom_prompt != null ? String(row.custom_prompt) : "",
     createdAt: new Date(String(row.created_at)),
   };
 }
@@ -51,6 +52,30 @@ export async function getTenantById(id: string): Promise<Tenant | null> {
   return rows[0] ? mapTenant(rows[0]) : null;
 }
 
+export async function listActiveTenants(): Promise<Tenant[]> {
+  const rows = await query("SELECT * FROM tenants WHERE status = 'active'");
+  return rows.map(mapTenant);
+}
+
+/**
+ * Resolve a tenant by the OpenClaw channel account id that actually received a
+ * message (channel_links.openclaw_account_id — the bridge's own source of truth
+ * for which tenant owns which OpenClaw account slot). In shared-gateway mode every
+ * inbound webhook's `chatwoot_account_id` field is unreliable (OpenClaw sends the
+ * same value regardless of which tenant's account/number the message came in on),
+ * so this is the correct primary way to resolve inbound webhooks — not chatwoot_account_id.
+ */
+export async function getTenantByOpenclawAccountId(openclawAccountId: string): Promise<Tenant | null> {
+  const rows = await query(
+    `SELECT t.* FROM tenants t
+     JOIN channel_links cl ON cl.tenant_id = t.id
+     WHERE cl.openclaw_account_id = $1
+     LIMIT 1`,
+    [openclawAccountId],
+  );
+  return rows[0] ? mapTenant(rows[0]) : null;
+}
+
 export async function setTenantStatus(id: string, status: Tenant["status"]): Promise<void> {
   await query("UPDATE tenants SET status = $2 WHERE id = $1", [id, status]);
 }
@@ -61,6 +86,10 @@ export async function setTenantAiEnabled(id: string, enabled: boolean): Promise<
 
 export async function setBillingCustomer(id: string, customerId: string): Promise<void> {
   await query("UPDATE tenants SET billing_customer_id = $2 WHERE id = $1", [id, customerId]);
+}
+
+export async function setTenantCustomPrompt(id: string, prompt: string): Promise<void> {
+  await query("UPDATE tenants SET custom_prompt = $2 WHERE id = $1", [id, prompt]);
 }
 
 export async function upsertAgentBot(input: {
@@ -157,6 +186,30 @@ export async function getChannelLinkByInbox(
     chatwootInboxId: Number(row.chatwoot_inbox_id),
     metadata: (row.metadata as Record<string, unknown>) ?? {},
   };
+}
+
+/**
+ * The tenant already using this WhatsApp number, if any other tenant is.
+ * A WhatsApp number belongs to exactly one tenant: two tenants linking the same
+ * number means two Baileys sessions racing for the same phone, and WhatsApp kills
+ * one of them (401 "Connection Failure") — so the loser silently stops receiving.
+ */
+export async function findWhatsAppNumberOwner(input: {
+  waNumber: string;
+  excludeTenantId: string;
+}): Promise<{ tenantId: string; chatwootAccountId: number } | null> {
+  const rows = await query(
+    `SELECT cl.tenant_id, t.chatwoot_account_id
+       FROM channel_links cl
+       JOIN tenants t ON t.id = cl.tenant_id
+      WHERE cl.channel_type = 'whatsapp'
+        AND cl.tenant_id <> $2
+        AND cl.metadata->>'waNumber' = $1
+      LIMIT 1`,
+    [input.waNumber, input.excludeTenantId],
+  );
+  const row = rows[0];
+  return row ? { tenantId: String(row.tenant_id), chatwootAccountId: Number(row.chatwoot_account_id) } : null;
 }
 
 export async function upsertConversationMap(input: {

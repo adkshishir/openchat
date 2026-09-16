@@ -13,11 +13,23 @@ class Openchat::ProvisionService
     bot = find_or_create_openclaw_bot
     ensure_account_webhook!(bot)
     Openchat::AttachOpenclawAgentService.new(account: @account).perform_all
-    Openchat::BridgeClient.new.provision(account: @account, agent_bot: bot, admin_user_id: @user&.id)
+    result = Openchat::BridgeClient.new.provision(account: @account, agent_bot: bot, admin_user_id: @user&.id)
+    store_bridge_tenant_id!(result['tenant_id'])
     bot
   end
 
   private
+
+  # The bridge's tenant UUID — not Chatwoot's own sequential account id — is what
+  # gets handed to the browser for the one bridge surface it talks to directly
+  # (the WhatsApp QR WebSocket), so a tenant can't just increment an id to probe
+  # another tenant's setup stream.
+  def store_bridge_tenant_id!(tenant_id)
+    return if tenant_id.blank?
+    return if @account.custom_attributes['openchat_tenant_id'] == tenant_id
+
+    @account.update!(custom_attributes: (@account.custom_attributes || {}).merge('openchat_tenant_id' => tenant_id))
+  end
 
   def bridge_webhook_url
     "#{ENV.fetch('OPENCHAT_BRIDGE_URL', 'http://localhost:8090')}/webhooks/chatwoot/#{@account.id}"

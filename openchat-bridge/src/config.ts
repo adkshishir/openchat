@@ -12,6 +12,8 @@ export const config = {
   secret: required("OPENCHAT_SECRET", "dev-openchat-secret-change-me-32b"),
   chatwootBaseUrl: process.env.CHATWOOT_BASE_URL ?? "http://localhost:3000",
   chatwootPlatformToken: process.env.CHATWOOT_PLATFORM_TOKEN ?? "",
+  /** Sent as X-Openchat-Bridge-Secret when calling back into Rails' internal openchat_tools endpoints. */
+  chatwootInternalSecret: process.env.OPENCHAT_BRIDGE_INTERNAL_SECRET ?? "dev-bridge-internal-secret",
   openclawGatewayUrl: process.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789",
   openclawGatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN ?? "",
   openclawGatewayImage: process.env.OPENCLAW_GATEWAY_IMAGE ?? "openclaw:local",
