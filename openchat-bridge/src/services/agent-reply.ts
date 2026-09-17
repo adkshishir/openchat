@@ -9,6 +9,7 @@ import { mintCommerceToken } from "../mcp/commerce-token.ts";
 import { OpenClawGatewayClient } from "./openclaw.ts";
 import { allowRequest } from "./rate-limit.ts";
 import { getSystemPrompt } from "./system-prompt.ts";
+import { normalizeWhatsAppAddress } from "./whatsapp-address.ts";
 
 const COMMERCE_TOOLS_PROMPT =
   "You can sell directly in this conversation using your commerce tools: call show_product_cards when the " +
@@ -39,36 +40,6 @@ function conversationId(payload: ChatwootMessageWebhook): number | null {
   return payload.conversation?.display_id ?? payload.conversation?.id ?? null;
 }
 
-/**
- * Normalize a WhatsApp destination identifier. Only real phone-based WhatsApp JIDs
- * (`<digits>@s.whatsapp.net` / `<digits>@c.us`) or bare phone numbers get coerced to
- * E.164. A privacy-mode sender (WhatsApp username feature) arrives as `<id>@lid` with
- * no phone number behind it at all — mangling that into fake digits would silently
- * route the reply to a bogus or wrong destination, so it's returned unchanged and
- * handed to OpenClaw's `send` RPC as-is (OpenClaw's WhatsApp plugin already resolves
- * `@lid` addresses natively).
- */
-export function normalizePhone(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed.includes("@")) {
-    const [user = trimmed, domain = ""] = trimmed.split("@");
-    if (domain !== "s.whatsapp.net" && domain !== "c.us") {
-      return trimmed;
-    }
-    const digits = user.replace(/\D/g, "");
-    return digits ? `+${digits}` : null;
-  }
-  if (trimmed.startsWith("+")) return trimmed;
-  const digits = trimmed.replace(/\D/g, "");
-  if (!digits) return null;
-  // Bare 10-digit numbers starting with 9 are almost always Nepali mobile numbers
-  // missing their country code (the operator's home market) — default to +977.
-  if (digits.length === 10 && digits.startsWith("9")) return `+977${digits}`;
-  return `+${digits}`;
-}
-
 /** Resolve the WhatsApp destination strictly from this conversation — never from model output. */
 async function resolveWhatsAppDestination(input: {
   tenantId: string;
@@ -76,10 +47,10 @@ async function resolveWhatsAppDestination(input: {
   payload: ChatwootMessageWebhook;
 }): Promise<string | null> {
   const mapped = await getConversationMapByChatwootId(input.tenantId, input.convId);
-  const fromMap = normalizePhone(mapped?.externalContactId);
+  const fromMap = normalizeWhatsAppAddress(mapped?.externalContactId);
   if (fromMap) return fromMap;
 
-  const fromMeta = normalizePhone(
+  const fromMeta = normalizeWhatsAppAddress(
     input.payload.conversation?.meta?.sender?.identifier ??
       input.payload.conversation?.meta?.sender?.phone_number ??
       input.payload.sender?.identifier ??

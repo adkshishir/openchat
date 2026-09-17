@@ -1,4 +1,5 @@
 import { config } from "../config.ts";
+import { normalizeWhatsAppAddress } from "./whatsapp-address.ts";
 
 export class ChatwootClient {
   private readonly accountId: number;
@@ -120,13 +121,10 @@ function normalizeContactId(value: string, channel?: string): string {
   if (ch && ch !== "whatsapp") {
     return trimmed.includes(":") ? trimmed : `${ch}:${trimmed}`;
   }
-  if (trimmed.includes("@")) {
-    const user = trimmed.split("@")[0] ?? trimmed;
-    return user.startsWith("+") ? user : `+${user.replace(/\D/g, "")}`;
-  }
-  if (trimmed.startsWith("+")) return trimmed;
-  const digits = trimmed.replace(/\D/g, "");
-  return digits ? `+${digits}` : trimmed;
+  // Same normalizer the reply paths use, so the id a conversation is filed under is
+  // exactly the string OpenClaw is later asked to send to — including a privacy-mode
+  // sender's opaque `<id>@lid`, which must not be mangled into a phone number.
+  return normalizeWhatsAppAddress(trimmed) ?? trimmed;
 }
 
 type PublicConversation = {

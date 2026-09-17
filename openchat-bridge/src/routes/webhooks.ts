@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { decryptSecret } from "../crypto.ts";
 import type { ChatwootMessageWebhook } from "../types.ts";
-import { handleAgentBotWebhook, normalizePhone, verifyChatwootSignature } from "../services/agent-reply.ts";
+import { handleAgentBotWebhook, verifyChatwootSignature } from "../services/agent-reply.ts";
 import { getAgentBot, getTenantByAccountId, getTenantByOpenclawAccountId, recordEvent } from "../services/tenants.ts";
 import { syncChannelInbound, syncHumanReplyToChannel, syncWhatsAppInbound } from "../services/sync.ts";
 import { OPENCLAW_NATIVE_CHANNELS } from "../services/channel-types.ts";
+import { normalizeWhatsAppAddress } from "../services/whatsapp-address.ts";
 
 /**
  * OpenClaw's native per-channel retry paths (its own auto-reply resolver failing
@@ -93,7 +94,7 @@ export async function registerWebhookRoutes(app: FastifyInstance) {
       // need normalizing; other channels (Discord snowflake IDs, etc.) use their raw
       // identifier as-is — reformatting would corrupt them (e.g. a Discord id is all
       // digits and would get a bogus "+" prepended).
-      const to = link?.channelType === "whatsapp" ? normalizePhone(rawTo) : rawTo;
+      const to = link?.channelType === "whatsapp" ? normalizeWhatsAppAddress(rawTo) : rawTo;
       const needsRelay =
         link && (link.channelType === "whatsapp" || OPENCLAW_NATIVE_CHANNELS.has(link.channelType));
       if (needsRelay && link && to && payload.content?.trim()) {

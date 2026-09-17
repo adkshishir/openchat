@@ -14,6 +14,7 @@ import {
   sliceMarkdownIR,
 } from "openclaw/plugin-sdk/text-chunking";
 import { CONFIG_DIR, resolveUserPath } from "openclaw/plugin-sdk/text-utility-runtime";
+import { normalizeDirectLidJid } from "./normalize-target.js";
 
 const WHATSAPP_FORMAT_CAPABILITIES = FormatCapabilityProfile.define({
   mechanism: "markdown",
@@ -144,10 +145,7 @@ function addEquivalentDirectChatCandidate(target: string[], jid: string | null |
     addUniqueString(target, `${pnMatch[1]}@${pnMatch[2]}`);
     return;
   }
-  const lidMatch = jid?.match(DIRECT_LID_JID_RE);
-  if (lidMatch) {
-    addUniqueString(target, `${lidMatch[1]}@${lidMatch[2]}`);
-  }
+  addUniqueString(target, normalizeDirectLidJid(jid));
 }
 
 export async function resolveEquivalentWhatsAppDirectChatJids(
@@ -283,7 +281,7 @@ export function jidToE164(jid: string, opts?: JidToE164Options): string | null {
   }
   const shouldLog = opts?.logMissing ?? shouldLogVerbose();
   if (shouldLog) {
-    logVerbose(`LID mapping not found for ${lidMatch[1]}; skipping inbound message`);
+    logVerbose(`LID mapping not found for ${lidMatch[1]}; no phone number for this contact`);
   }
   return null;
 }

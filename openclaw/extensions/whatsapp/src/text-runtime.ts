@@ -5,6 +5,7 @@ export {
   stripToolCallXmlTags,
 } from "openclaw/plugin-sdk/text-chunking";
 export { normalizeE164, resolveUserPath } from "openclaw/plugin-sdk/text-utility-runtime";
+export { normalizeDirectLidJid } from "./normalize-target.js";
 export {
   assertWebChannel,
   isSelfChatMode,

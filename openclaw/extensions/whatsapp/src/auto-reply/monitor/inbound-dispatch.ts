@@ -45,6 +45,7 @@ import {
   getAgentScopedMediaLocalRoots,
   jidToE164,
   logVerbose,
+  normalizeDirectLidJid,
   resolveChunkMode,
   resolveIdentityNamePrefix,
   resolveInboundLastRouteSessionKey,
@@ -551,7 +552,10 @@ export function resolveWhatsAppDmRouteTarget(params: {
     return params.normalizeE164(params.senderE164) ?? undefined;
   }
   if (conversationId.includes("@")) {
-    return jidToE164(conversationId) ?? undefined;
+    // A phone-number-private contact has no E.164; their LID is the only address that
+    // reaches them, and it is a valid send target, so it is what "last DM route" means
+    // for that conversation.
+    return jidToE164(conversationId) ?? normalizeDirectLidJid(conversationId) ?? undefined;
   }
   return params.normalizeE164(conversationId) ?? undefined;
 }

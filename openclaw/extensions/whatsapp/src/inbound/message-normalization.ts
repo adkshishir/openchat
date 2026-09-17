@@ -1,6 +1,7 @@
 // Whatsapp plugin module normalizes inbound identity and access facts.
 import type { AnyMessageContent, WAMessage } from "baileys";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { normalizeDirectLidJid } from "../text-runtime.js";
 import {
   checkInboundAccessControl,
   type AcceptedInboundAccessControlResult,
@@ -75,15 +76,20 @@ export function createWhatsAppInboundMessageNormalizer(options: {
     }
 
     const participantJid = msg.key?.participant ?? undefined;
-    const from = group ? remoteJid : await socketSession.resolveInboundJid(remoteJid);
-    if (!from) {
-      return null;
-    }
     const senderE164 = group
       ? participantJid
         ? await socketSession.resolveInboundJid(participantJid)
         : null
-      : from;
+      : await socketSession.resolveInboundJid(remoteJid);
+    // A contact messaging from a WhatsApp username with phone-number privacy has no
+    // phone number behind their `@lid` address — not "not yet mapped", but never. The
+    // LID is their address, so it becomes the conversation identity; only `senderE164`
+    // stays null. Requiring E.164 here dropped those DMs before access control and
+    // delivery, so they reached neither the agent nor any downstream inbox.
+    const from = group ? remoteJid : (senderE164 ?? normalizeDirectLidJid(remoteJid));
+    if (!from) {
+      return null;
+    }
 
     let groupSubject: string | undefined;
     let groupParticipants: string[] | undefined;

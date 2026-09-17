@@ -63,6 +63,41 @@ describe("resolveWhatsAppOutboundTarget", () => {
     },
   );
 
+  it.each([
+    ["276853659042038@lid", "276853659042038@lid"],
+    ["  whatsapp:276853659042038@lid  ", "276853659042038@lid"],
+  ])("keeps %j addressed as a LID instead of coercing it to a phone number", (to, expected) => {
+    // The local part of a LID is an opaque WhatsApp id. Reading it as E.164 produced
+    // "+276853659042038", which then addressed 276853659042038@s.whatsapp.net — a
+    // number the contact does not own — so a phone-number-private sender never got a reply.
+    expect(resolveWhatsAppOutboundTarget({ to, allowFrom: ["*"], mode: "implicit" })).toEqual({
+      ok: true,
+      to: expected,
+    });
+  });
+
+  it("matches a LID target against a LID allowFrom entry", () => {
+    expect(
+      resolveWhatsAppOutboundTarget({
+        to: "276853659042038@lid",
+        allowFrom: ["276853659042038@lid"],
+        mode: "implicit",
+      }),
+    ).toEqual({ ok: true, to: "276853659042038@lid" });
+    expect(
+      resolveWhatsAppOutboundTarget({
+        to: "276853659042038@lid",
+        allowFrom: [PRIMARY_TARGET],
+        mode: "implicit",
+      }),
+    ).toEqual({
+      ok: false,
+      error: expect.objectContaining({
+        message: `Target "276853659042038@lid" is not listed in the configured WhatsApp allowFrom policy.`,
+      }),
+    });
+  });
+
   it("trims the resolved target", () => {
     expect(
       resolveWhatsAppOutboundTarget({

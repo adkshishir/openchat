@@ -35,6 +35,7 @@ import {
 import type { WhatsAppGroupMetadataCache } from "../inbound/group-metadata-cache.js";
 import { attachWebInboxToSocket } from "../inbound/monitor.js";
 import type { WebInboundCallbackMessage } from "../inbound/types.js";
+import { notifyOpenChatBridge } from "../openchat-bridge-notify.js";
 import {
   newConnectionId,
   resolveHeartbeatSeconds,
@@ -49,7 +50,6 @@ import { buildMentionConfig } from "./mentions.js";
 import { createWebChannelStatusController } from "./monitor-state.js";
 import { formatWhatsAppInboundListeningLog } from "./monitor/listener-log.js";
 import { createWebOnMessageHandler } from "./monitor/on-message.js";
-import { notifyOpenChatBridge } from "../openchat-bridge-notify.js";
 import type { WebMonitorTuning } from "./types.js";
 import { isLikelyWhatsAppCryptoError } from "./util.js";
 
@@ -303,9 +303,13 @@ export async function monitorWebChannel(
                 statusController.noteInbound(inboundAt);
                 notifyOpenChatBridge({
                   channel: "whatsapp",
-                  from: String(
-                    msg.platform.senderE164 ?? msg.platform.senderJid ?? msg.platform.chatJid ?? "",
-                  ),
+                  // Falls back to the admitted conversation id, not the raw chat JID: for a
+                  // phone-number-private contact that id is their canonical `<lid>@lid`
+                  // address, which is the exact string a reply must be addressed back to.
+                  from:
+                    msg.platform.senderE164 ??
+                    msg.platform.senderJid ??
+                    msg.admission.conversation.id,
                   text: String(msg.payload.body ?? ""),
                   accountId: account.accountId,
                   messageId: msg.event.id,

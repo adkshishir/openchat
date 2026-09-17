@@ -158,7 +158,12 @@ export async function checkInboundAccessControl(params: {
             }),
         })({
           senderId: candidate,
-          senderIdLine: `Your WhatsApp phone number: ${candidate}`,
+          // A phone-number-private sender is identified by their LID, not a number;
+          // calling it a phone number would tell the operator to approve something
+          // that is nowhere in their contacts.
+          senderIdLine: candidate.startsWith("+")
+            ? `Your WhatsApp phone number: ${candidate}`
+            : `Your WhatsApp ID: ${candidate}`,
           meta: { name: (params.pushName ?? "").trim() || undefined },
           onCreated: () => {
             logWhatsAppVerbose(

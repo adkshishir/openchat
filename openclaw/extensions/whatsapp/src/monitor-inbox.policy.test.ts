@@ -163,6 +163,50 @@ describe("web monitor inbox", () => {
     await listener.close();
   });
 
+  it("delivers a DM whose LID has no phone number behind it", async () => {
+    // A contact messaging from a WhatsApp username with phone-number privacy has no
+    // E.164 at all — getPNForLID stays null forever. Requiring one dropped the message
+    // during normalization, so it reached neither the agent nor any downstream inbox.
+    const config = {
+      channels: {
+        whatsapp: {
+          dmPolicy: "open",
+          allowFrom: ["*"],
+        },
+      },
+      messages: DEFAULT_MESSAGES_CFG,
+    };
+
+    const { onMessage, listener, sock } = await startWebInboxMonitor({ config });
+
+    sock.ev.emit(
+      "messages.upsert",
+      createNotifyUpsert(
+        createDmMessage({
+          id: "lid-only-1",
+          remoteJid: "276853659042038@lid",
+          conversation: "hello from a username",
+        }),
+      ),
+    );
+    await waitForMessageCalls(onMessage, 1);
+
+    const payload = firstInboundPayload(onMessage);
+    expect(payload.payload.body).toContain("hello from a username");
+    // The LID is the sender's identity; nothing may invent a phone number for it.
+    expect(payload.platform.chatJid).toBe("276853659042038@lid");
+    expect(payload.platform.senderE164).toBeUndefined();
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        admission: expect.objectContaining({
+          conversation: expect.objectContaining({ id: "276853659042038@lid" }),
+        }),
+      }),
+    );
+
+    await listener.close();
+  });
+
   it("delivery coordinator skips read receipts in self-chat mode", async () => {
     const config = {
       channels: {

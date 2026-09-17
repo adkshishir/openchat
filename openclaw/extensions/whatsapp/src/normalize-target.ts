@@ -8,7 +8,7 @@ import {
 
 const WHATSAPP_USER_JID_RE = /^(\d+)(?::\d+)?@s\.whatsapp\.net$/i;
 const WHATSAPP_LEGACY_USER_JID_RE = /^(\d+)@c\.us$/i;
-const WHATSAPP_LID_RE = /^(\d+)@lid$/i;
+const WHATSAPP_LID_RE = /^(\d+)(?::\d+)?@(lid|hosted\.lid)$/i;
 const NON_WHATSAPP_PROVIDER_PREFIX_RE = /^[a-z][a-z0-9-]*:/i;
 const WHATSAPP_NEWSLETTER_JID_RE = /^([0-9]+)@newsletter$/i;
 
@@ -67,12 +67,20 @@ function extractUserJidPhone(jid: string): string | null {
     const phone = legacyUserMatch[1];
     return phone ? phone : null;
   }
-  const lidMatch = jid.match(WHATSAPP_LID_RE);
-  if (lidMatch) {
-    const phone = lidMatch[1];
-    return phone ? phone : null;
-  }
   return null;
+}
+
+/**
+ * Canonical device-less `<lid>@lid` / `<lid>@hosted.lid` form, or null when the JID is
+ * not a direct LID address. A LID is a stable per-contact address in its own right:
+ * a contact using a WhatsApp username with phone-number privacy has no phone number
+ * behind it at all, so this — not a phone number — is their only identity. One
+ * definition, because inbound normalization and outbound targeting must agree on the
+ * exact string or a reply goes to the wrong chat.
+ */
+export function normalizeDirectLidJid(jid: string | null | undefined): string | null {
+  const match = jid?.trim().match(WHATSAPP_LID_RE);
+  return match?.[1] && match[2] ? `${match[1]}@${match[2].toLowerCase()}` : null;
 }
 
 export function normalizeWhatsAppTarget(value: string): string | null {
@@ -87,6 +95,14 @@ export function normalizeWhatsAppTarget(value: string): string | null {
   if (isWhatsAppNewsletterJid(candidate)) {
     const match = candidate.match(WHATSAPP_NEWSLETTER_JID_RE);
     return match ? `${match[1]}@newsletter` : null;
+  }
+  // A LID local part is an opaque WhatsApp identifier, never a phone number. Coercing
+  // it to E.164 produced a plausible-looking `+<lid>` that then addressed
+  // `<lid>@s.whatsapp.net` — a number the contact does not own — so LID targets keep
+  // their own canonical form and are handed to Baileys as-is.
+  const lidTarget = normalizeDirectLidJid(candidate);
+  if (lidTarget) {
+    return lidTarget;
   }
   if (isWhatsAppUserTarget(candidate)) {
     const phone = extractUserJidPhone(candidate);
